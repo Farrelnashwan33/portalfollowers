@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { queryOne, execute, transaction } from '@/lib/db';
 import { xenditService } from '@/services/xendit.service';
+import { medanpediaService } from '@/services/medanpedia.service';
 import crypto from 'crypto';
 
 export async function POST(req: NextRequest) {
@@ -46,8 +47,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, message: 'No external_id found in webhook' }, { status: 200 });
     }
 
-    // 4. Find Associated Order
-    const order = await queryOne<any>('SELECT * FROM orders WHERE order_code = ? OR id = ?', [externalId, externalId]);
+    // 4. Find Associated Order with Package details
+    const order = await queryOne<any>(
+      `SELECT o.*, pkg.provider_service_id, pkg.category as package_category, pkg.name as package_name 
+       FROM orders o 
+       LEFT JOIN packages pkg ON o.package_id = pkg.id 
+       WHERE o.order_code = ? OR o.id = ?`,
+      [externalId, externalId]
+    );
     if (!order) {
       console.warn(`⚠️ Order not found for webhook external_id: ${externalId}`);
       return NextResponse.json({ success: true, message: 'Order not found, logged event' }, { status: 200 });
@@ -64,6 +71,8 @@ export async function POST(req: NextRequest) {
         }
 
         const now = new Date();
+        const fulfillmentTaskId = crypto.randomUUID();
+
         await transaction(async (conn) => {
           // A. Update Order Status
           await conn.execute(
@@ -101,8 +110,7 @@ export async function POST(req: NextRequest) {
             ]
           );
 
-          // D. Create Fulfillment Task
-          const fulfillmentTaskId = crypto.randomUUID();
+          // D. Create Initial Fulfillment Task
           await conn.execute(
             `INSERT INTO fulfillment_tasks (
               id, order_id, provider, service_type, requested_quantity,
@@ -112,7 +120,73 @@ export async function POST(req: NextRequest) {
           );
         });
 
-        console.log(`✅ Order ${order.order_code} successfully marked as PAID with fulfillment task created.`);
+        console.log(`✅ Order ${order.order_code} marked PAID with fulfillment task created.`);
+
+        // 6. Trigger MedanPedia Auto-Order if configured
+        if (medanpediaService.isConfigured() && order.provider_service_id) {
+          try {
+            console.log(`🚀 Triggering MedanPedia auto-order for order ${order.order_code}, service: ${order.provider_service_id}...`);
+            const autoOrderRes = await medanpediaService.createOrder({
+              serviceId: order.provider_service_id,
+              target: order.instagram_username,
+              quantity: order.followers_amount,
+            });
+
+            const orderTime = new Date();
+            if (autoOrderRes.success && autoOrderRes.orderId) {
+              const providerOrderId = String(autoOrderRes.orderId);
+              await transaction(async (conn) => {
+                await conn.execute(
+                  `UPDATE fulfillment_tasks 
+                   SET provider = 'MEDANPEDIA',
+                       provider_order_id = ?,
+                       provider_status = 'Processing',
+                       status = 'PROCESSING',
+                       started_at = ?,
+                       updated_at = ?
+                   WHERE id = ?`,
+                  [providerOrderId, orderTime, orderTime, fulfillmentTaskId]
+                );
+
+                await conn.execute(
+                  `UPDATE orders SET service_status = 'PROCESSING', updated_at = ? WHERE id = ?`,
+                  [orderTime, order.id]
+                );
+
+                const autoHistId = crypto.randomUUID();
+                await conn.execute(
+                  `INSERT INTO order_status_history (id, order_id, status, note, created_at)
+                   VALUES (?, ?, 'PROCESSING', ?, ?)`,
+                  [
+                    autoHistId,
+                    order.id,
+                    `Pesanan otomatis diteruskan ke MedanPedia (Provider Order ID: ${providerOrderId}, Service: #${order.provider_service_id})`,
+                    orderTime,
+                  ]
+                );
+              });
+              console.log(`🎉 Auto-order successfully placed on MedanPedia (ID: ${providerOrderId})`);
+            } else {
+              console.warn(`⚠️ MedanPedia auto-order failed: ${autoOrderRes.error}`);
+              await execute(
+                `UPDATE fulfillment_tasks SET error_message = ?, updated_at = NOW() WHERE id = ?`,
+                [`Auto-order gagal: ${autoOrderRes.error}`, fulfillmentTaskId]
+              );
+            }
+          } catch (err: any) {
+            console.error('Error during auto-order to MedanPedia:', err);
+            await execute(
+              `UPDATE fulfillment_tasks SET error_message = ?, updated_at = NOW() WHERE id = ?`,
+              [`Auto-order error: ${err.message}`, fulfillmentTaskId]
+            );
+          }
+        } else {
+          if (!medanpediaService.isConfigured()) {
+            console.log(`ℹ️ MedanPedia credentials not fully configured; order ${order.order_code} queued for manual fulfillment.`);
+          } else if (!order.provider_service_id) {
+            console.log(`ℹ️ Package ${order.package_name} has no provider_service_id configured; queued for manual fulfillment.`);
+          }
+        }
       }
     } else if (invoiceStatus === 'EXPIRED') {
       if (order.payment_status === 'PENDING_PAYMENT') {

@@ -467,3 +467,72 @@ export async function updateAdminFulfillment(
   }
 }
 
+export async function fetchMedanpediaProfile(): Promise<{
+  success: boolean;
+  configured?: boolean;
+  data?: { username?: string; balance?: number };
+  error?: string;
+}> {
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/medanpedia/profile`, {
+      headers: getAuthHeaders(),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: 'Gagal mengambil data profil MedanPedia.' };
+  }
+}
+
+export async function fetchMedanpediaServices(): Promise<{
+  success: boolean;
+  data?: Array<{ id: string | number; category: string; name: string; price: number; min: number; max: number; status: string }>;
+  error?: string;
+}> {
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/medanpedia/services`, {
+      headers: getAuthHeaders(),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: 'Gagal mengambil daftar layanan MedanPedia.' };
+  }
+}
+
+export async function syncMedanpediaFulfillment(
+  taskId?: string
+): Promise<{ success: boolean; message?: string; syncedCount?: number; results?: any[]; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/fulfillment/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+      },
+      body: JSON.stringify({ taskId }),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: 'Gagal menyinkronkan status dari MedanPedia.' };
+  }
+}
+
+export async function triggerMedanpediaAutoOrder(
+  taskId: string,
+  serviceId?: string
+): Promise<{ success: boolean; message?: string; providerOrderId?: string; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/fulfillment/${taskId}/auto-order`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+      },
+      body: JSON.stringify({ serviceId }),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: 'Gagal memproses auto-order MedanPedia.' };
+  }
+}
+
+

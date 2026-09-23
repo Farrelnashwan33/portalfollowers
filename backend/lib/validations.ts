@@ -59,6 +59,7 @@ export const packageSchema = z.object({
   estimatedProcessingMinutes: z.number().int().positive().default(5),
   estimatedTime: z.string().min(1, { message: 'Estimasi waktu wajib diisi.' }).default('1–5 Menit'),
   badge: z.string().optional().nullable(),
+  providerServiceId: z.string().optional().nullable(),
   isActive: z.boolean().default(true),
 });
 

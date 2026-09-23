@@ -17,7 +17,11 @@
     fetchAdminFreeOrders,
     createAdminFreeOrder,
     fetchAdminFulfillment,
-    updateAdminFulfillment
+    updateAdminFulfillment,
+    fetchMedanpediaProfile,
+    fetchMedanpediaServices,
+    syncMedanpediaFulfillment,
+    triggerMedanpediaAutoOrder
   } from '$services/api';
   import { formatCurrency, formatNumber, formatDate } from '$utils/formatters';
   import Skeleton from '$components/Skeleton.svelte';
@@ -45,7 +49,10 @@
     Gift,
     ListOrdered,
     ArrowUpRight,
-    HelpCircle
+    HelpCircle,
+    Wallet,
+    Send,
+    Sliders
   } from 'lucide-svelte';
 
   type TabType = 'dashboard' | 'orders' | 'packages' | 'payments' | 'customers' | 'free_orders' | 'fulfillment' | 'logs';
@@ -63,6 +70,13 @@
   let adminLogs: any[] = [];
   let freeOrders: any[] = [];
   let fulfillmentTasks: any[] = [];
+
+  // MedanPedia Provider State
+  let medanpediaProfile: { username?: string; balance?: number } | null = null;
+  let medanpediaConfigured = false;
+  let loadingMedanpedia = false;
+  let syncingFulfillment = false;
+  let triggeringAutoOrder: Record<string, boolean> = {};
 
   // Search & Filters
   let searchQuery = '';
@@ -86,6 +100,7 @@
   let pkgPrice = 79000;
   let pkgEstimatedTime = '1-5 Menit';
   let pkgBadge = '';
+  let pkgProviderServiceId = '';
   let pkgDescription = '';
   let pkgIsActive = true;
   let savingPackage = false;
@@ -111,8 +126,66 @@
   let savingFulfillment = false;
 
   onMount(async () => {
-    await loadData();
+    await Promise.all([loadData(), loadMedanpediaInfo()]);
   });
+
+  async function loadMedanpediaInfo() {
+    loadingMedanpedia = true;
+    try {
+      const res = await fetchMedanpediaProfile();
+      if (res.success && res.data) {
+        medanpediaProfile = res.data;
+        medanpediaConfigured = true;
+      } else {
+        medanpediaConfigured = res.configured ?? false;
+        medanpediaProfile = null;
+      }
+    } catch (e) {
+      console.error('Error loading MedanPedia profile:', e);
+    } finally {
+      loadingMedanpedia = false;
+    }
+  }
+
+  async function handleSyncMedanpedia(taskId?: string) {
+    syncingFulfillment = true;
+    try {
+      const res = await syncMedanpediaFulfillment(taskId);
+      if (res.success) {
+        toast.success(res.message || 'Status berhasil disinkronkan dari MedanPedia!');
+        await loadFulfillment();
+        await loadData();
+      } else {
+        toast.error(res.error || 'Gagal menyinkronkan status.');
+      }
+    } catch (e) {
+      toast.error('Gagal menghubungi server untuk sinkronisasi.');
+    } finally {
+      syncingFulfillment = false;
+    }
+  }
+
+  async function handleTriggerAutoOrder(task: any) {
+    if (!task) return;
+    triggeringAutoOrder[task.id] = true;
+    triggeringAutoOrder = { ...triggeringAutoOrder };
+    try {
+      const res = await triggerMedanpediaAutoOrder(task.id);
+      if (res.success) {
+        toast.success(res.message || 'Pesanan berhasil dikirim ke MedanPedia!');
+        await loadFulfillment();
+        await loadData();
+        await loadMedanpediaInfo();
+      } else {
+        toast.error(res.error || 'Gagal mengirim pesanan ke MedanPedia.');
+      }
+    } catch (e) {
+      toast.error('Gagal menghubungi server.');
+    } finally {
+      triggeringAutoOrder[task.id] = false;
+      triggeringAutoOrder = { ...triggeringAutoOrder };
+    }
+  }
 
   async function loadData() {
     loading = true;
@@ -260,6 +333,7 @@
     pkgPrice = 79000;
     pkgEstimatedTime = '1-5 Menit';
     pkgBadge = '';
+    pkgProviderServiceId = '';
     pkgDescription = '';
     pkgIsActive = true;
     isPackageModalOpen = true;
@@ -274,6 +348,7 @@
     pkgPrice = pkg.price;
     pkgEstimatedTime = pkg.estimated_time || (pkg as any).processing_time || '1-5 Menit';
     pkgBadge = pkg.badge || '';
+    pkgProviderServiceId = (pkg as any).provider_service_id || (pkg as any).providerServiceId || '';
     pkgDescription = pkg.description || '';
     pkgIsActive = pkg.is_active ?? true;
     isPackageModalOpen = true;
@@ -296,6 +371,8 @@
         processing_time: pkgEstimatedTime,
         estimatedTime: pkgEstimatedTime,
         badge: pkgBadge.trim() || null,
+        provider_service_id: pkgProviderServiceId.trim() || null,
+        providerServiceId: pkgProviderServiceId.trim() || null,
         description: pkgDescription.trim() || null,
         is_active: pkgIsActive,
         isActive: pkgIsActive,
@@ -490,6 +567,36 @@
         <div>
           <span class="metric-label">Sedang Diproses</span>
           <h2 class="metric-val">{processingOrders}</h2>
+        </div>
+      </div>
+
+      <div class="glass-card metric-card">
+        <div class="metric-icon-box" style="background: rgba(168, 85, 247, 0.12); border-color: rgba(168, 85, 247, 0.3);">
+          <Wallet size={24} color="#a855f7" />
+        </div>
+        <div style="flex: 1;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span class="metric-label">Saldo MedanPedia</span>
+            <button
+              class="btn-icon-subtle"
+              title="Refresh Saldo Provider"
+              on:click={loadMedanpediaInfo}
+              disabled={loadingMedanpedia}
+            >
+              <RefreshCw size={12} class={loadingMedanpedia ? 'spin' : ''} />
+            </button>
+          </div>
+          {#if loadingMedanpedia}
+            <h2 class="metric-val" style="font-size: 1.1rem; color: var(--color-text-muted);">Memuat...</h2>
+          {:else if medanpediaProfile && medanpediaProfile.balance !== undefined}
+            <h2 class="metric-val" style="color: #c084fc;">{formatCurrency(medanpediaProfile.balance)}</h2>
+            <span class="text-sub" style="font-size: 0.72rem;">User: {medanpediaProfile.username || 'MedanPedia API'}</span>
+          {:else}
+            <h2 class="metric-val" style="font-size: 1rem; color: #f59e0b;">
+              {medanpediaConfigured ? 'Cek API ID' : 'Belum Konfigurasi'}
+            </h2>
+            <span class="text-sub" style="font-size: 0.72rem;">Isi MEDANPEDIA_API_ID</span>
+          {/if}
         </div>
       </div>
     </div>
@@ -907,10 +1014,57 @@
     <!-- TAB 5: FULFILLMENT TASKS -->
     {#if activeTab === 'fulfillment'}
       <div class="glass-panel admin-content-card">
-        <div class="content-toolbar">
+        <!-- MedanPedia Provider Quick-Bar -->
+        <div class="medanpedia-banner">
+          <div class="mp-info">
+            <div class="mp-icon">
+              <Wallet size={18} color="#a855f7" />
+            </div>
+            <div>
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span class="font-bold text-white">MedanPedia SMM Gateway</span>
+                {#if medanpediaProfile && medanpediaProfile.balance !== undefined}
+                  <span class="badge badge-success" style="font-size: 0.65rem;">ONLINE</span>
+                {:else}
+                  <span class="badge badge-warning" style="font-size: 0.65rem;">
+                    {medanpediaConfigured ? 'CEK API ID' : 'BELUM AKTIF'}
+                  </span>
+                {/if}
+              </div>
+              <p class="text-sub" style="font-size: 0.8rem; margin: 0.15rem 0 0 0;">
+                {#if medanpediaProfile && medanpediaProfile.balance !== undefined}
+                  Sisa Saldo: <strong style="color: #c084fc;">{formatCurrency(medanpediaProfile.balance)}</strong> ({medanpediaProfile.username || 'API User'})
+                {:else}
+                  Pastikan <code style="color: #ec4899;">MEDANPEDIA_API_ID</code> & <code style="color: #ec4899;">MEDANPEDIA_API_KEY</code> terisi di backend .env.local
+                {/if}
+              </p>
+            </div>
+          </div>
+          <div class="mp-actions">
+            <button
+              class="btn btn-outline btn-sm"
+              on:click={() => handleSyncMedanpedia()}
+              disabled={syncingFulfillment}
+            >
+              <RefreshCw size={13} class={syncingFulfillment ? 'spin' : ''} />
+              <span>{syncingFulfillment ? 'Menyinkronkan...' : 'Sync Semua Status'}</span>
+            </button>
+            <button
+              class="btn btn-secondary btn-sm"
+              on:click={loadMedanpediaInfo}
+              disabled={loadingMedanpedia}
+              title="Refresh Saldo"
+            >
+              <Wallet size={13} />
+              <span>Refresh Saldo</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="content-toolbar" style="margin-top: 1.25rem;">
           <div>
             <h3 class="orders-title">Antrean Task Fulfillment Layanan</h3>
-            <p class="orders-sub">Kelola eksekusi pengiriman followers Instagram langsung ke akun tujuan</p>
+            <p class="orders-sub">Kelola eksekusi pengiriman followers Instagram secara otomatis maupun manual</p>
           </div>
           <button class="btn btn-secondary btn-sm" on:click={loadFulfillment}>
             <RefreshCw size={13} />
@@ -924,10 +1078,10 @@
               <tr>
                 <th>Order Code</th>
                 <th>Target Akun</th>
-                <th>Jumlah Pengiriman</th>
-                <th>Provider ID</th>
+                <th>Paket / Service</th>
+                <th>Jumlah & Progres</th>
+                <th>Provider Order ID</th>
                 <th>Status Task</th>
-                <th>Catatan</th>
                 <th>Aksi</th>
               </tr>
             </thead>
@@ -939,7 +1093,10 @@
               {:else}
                 {#each fulfillmentTasks as task}
                   <tr>
-                    <td><span class="font-bold text-white">{task.order_code || '-'}</span></td>
+                    <td>
+                      <span class="font-bold text-white block">{task.order_code || '-'}</span>
+                      <span class="text-sub" style="font-size: 0.72rem;">{formatDate(task.created_at)}</span>
+                    </td>
                     <td>
                       <a
                         href="https://www.instagram.com/{task.target_username}/"
@@ -950,20 +1107,77 @@
                         <Instagram size={14} color="#ec4899" />
                         <span>@{task.target_username} ↗</span>
                       </a>
+                      {#if task.customer_name}
+                        <span class="text-sub block" style="font-size: 0.72rem;">{task.customer_name}</span>
+                      {/if}
                     </td>
-                    <td><span class="followers-chip">+{formatNumber(task.quantity)} Followers</span></td>
-                    <td><span class="text-sub">{task.provider_order_id || '-'}</span></td>
                     <td>
-                      <span class="badge {task.status === 'COMPLETED' ? 'badge-success' : task.status === 'IN_PROGRESS' ? 'badge-info' : task.status === 'FAILED' ? 'badge-warning' : 'badge-warning'}">
+                      <span class="text-white block font-medium">{task.package_name || 'Instagram Followers'}</span>
+                      {#if task.provider_service_id}
+                        <span class="text-sub" style="font-size: 0.72rem;">ID Layanan: #{task.provider_service_id}</span>
+                      {:else}
+                        <span class="text-sub" style="font-size: 0.72rem; color: #f59e0b;">Belum ada Service ID</span>
+                      {/if}
+                    </td>
+                    <td>
+                      <span class="followers-chip">+{formatNumber(task.requested_quantity || task.quantity)}</span>
+                      {#if task.delivered_quantity > 0 || task.remains > 0}
+                        <div class="text-sub" style="font-size: 0.72rem; margin-top: 0.25rem;">
+                          Terkirim: {formatNumber(task.delivered_quantity || 0)} | Sisa: {formatNumber(task.remains || 0)}
+                        </div>
+                      {/if}
+                    </td>
+                    <td>
+                      {#if task.provider_order_id}
+                        <span class="badge badge-info" style="font-size: 0.75rem;">
+                          ID: {task.provider_order_id}
+                        </span>
+                        {#if task.provider_status}
+                          <span class="text-sub block" style="font-size: 0.72rem; margin-top: 0.2rem;">
+                            ({task.provider_status})
+                          </span>
+                        {/if}
+                      {:else}
+                        <span class="text-sub" style="color: #94a3b8;">Belum Terkirim</span>
+                      {/if}
+                      {#if task.error_message}
+                        <div class="text-sub" style="color: #ef4444; font-size: 0.7rem; max-width: 180px; word-break: break-word; margin-top: 0.2rem;">
+                          ⚠️ {task.error_message}
+                        </div>
+                      {/if}
+                    </td>
+                    <td>
+                      <span class="badge {task.status === 'COMPLETED' ? 'badge-success' : task.status === 'PROCESSING' || task.status === 'IN_PROGRESS' ? 'badge-info' : task.status === 'FAILED' ? 'badge-warning' : 'badge-warning'}">
                         {task.status}
                       </span>
                     </td>
-                    <td class="text-sub">{task.notes || '-'}</td>
                     <td>
-                      <button class="btn btn-primary btn-sm" on:click={() => openEditFulfillment(task)}>
-                        <Edit size={13} />
-                        <span>Update</span>
-                      </button>
+                      <div style="display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap;">
+                        {#if !task.provider_order_id && task.status !== 'COMPLETED'}
+                          <button
+                            class="btn btn-primary btn-sm"
+                            title="Kirim Otomatis ke MedanPedia"
+                            on:click={() => handleTriggerAutoOrder(task)}
+                            disabled={triggeringAutoOrder[task.id]}
+                          >
+                            <Send size={12} class={triggeringAutoOrder[task.id] ? 'spin' : ''} />
+                            <span>{triggeringAutoOrder[task.id] ? 'Kirim...' : 'Kirim MedanPedia'}</span>
+                          </button>
+                        {:else if task.provider_order_id && task.status !== 'COMPLETED'}
+                          <button
+                            class="btn btn-outline btn-sm"
+                            title="Sync Status dari MedanPedia"
+                            on:click={() => handleSyncMedanpedia(task.id)}
+                            disabled={syncingFulfillment}
+                          >
+                            <RefreshCw size={12} class={syncingFulfillment ? 'spin' : ''} />
+                            <span>Sync</span>
+                          </button>
+                        {/if}
+                        <button class="btn btn-secondary btn-sm" on:click={() => openEditFulfillment(task)} title="Edit Manual">
+                          <Edit size={12} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 {/each}
@@ -1238,6 +1452,20 @@
         </div>
 
         <div class="form-group">
+          <label for="pkg-provider-service-id" class="input-label">ID Layanan MedanPedia (Service ID)</label>
+          <input
+            id="pkg-provider-service-id"
+            type="text"
+            class="input-field"
+            placeholder="Contoh: 1058 (ID Layanan di MedanPedia)"
+            bind:value={pkgProviderServiceId}
+          />
+          <span class="text-sub" style="font-size: 0.72rem; margin-top: 0.25rem; display: block;">
+            Digunakan untuk auto-order otomatis saat pembayaran paket ini diverifikasi.
+          </span>
+        </div>
+
+        <div class="form-group">
           <label for="pkg-desc-input" class="input-label">Deskripsi Paket</label>
           <textarea
             id="pkg-desc-input"
@@ -1474,7 +1702,81 @@
 
   @media (min-width: 1024px) {
     .metrics-grid {
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .metrics-grid {
+      grid-template-columns: repeat(5, 1fr);
+    }
+  }
+
+  /* MedanPedia Banner */
+  .medanpedia-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.1) 0%, rgba(236, 72, 153, 0.06) 100%);
+    border: 1px solid rgba(168, 85, 247, 0.25);
+    border-radius: var(--radius-md);
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .mp-info {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+  }
+
+  .mp-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: rgba(168, 85, 247, 0.18);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .mp-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .btn-icon-subtle {
+    background: transparent;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color var(--transition-fast);
+  }
+
+  .btn-icon-subtle:hover {
+    color: #ffffff;
+  }
+
+  :global(.spin) {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
     }
   }
 

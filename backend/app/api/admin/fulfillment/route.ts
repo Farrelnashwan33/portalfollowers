@@ -19,7 +19,8 @@ export async function GET(req: NextRequest) {
         o.customer_name,
         o.customer_email,
         pkg.name as package_name,
-        pkg.category as package_category
+        pkg.category as package_category,
+        pkg.provider_service_id
       FROM fulfillment_tasks f
       LEFT JOIN orders o ON f.order_id = o.id
       LEFT JOIN packages pkg ON o.package_id = pkg.id

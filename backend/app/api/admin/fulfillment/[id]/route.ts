@@ -7,6 +7,10 @@ import crypto from 'crypto';
 const updateFulfillmentSchema = z.object({
   status: z.enum(['WAITING_FOR_FULFILLMENT', 'PROCESSING', 'PARTIALLY_COMPLETED', 'COMPLETED', 'FAILED']),
   provider: z.string().optional().nullable(),
+  provider_order_id: z.string().optional().nullable(),
+  start_count: z.number().int().optional().nullable(),
+  remains: z.number().int().optional().nullable(),
+  provider_status: z.string().optional().nullable(),
   delivered_quantity: z.number().int().nonnegative().optional().nullable(),
   error_message: z.string().optional().nullable(),
   notes: z.string().optional().nullable()
@@ -38,6 +42,10 @@ export async function PATCH(
         `UPDATE fulfillment_tasks 
          SET status = ?, 
              provider = COALESCE(?, provider),
+             provider_order_id = COALESCE(?, provider_order_id),
+             start_count = COALESCE(?, start_count),
+             remains = COALESCE(?, remains),
+             provider_status = COALESCE(?, provider_status),
              delivered_quantity = COALESCE(?, delivered_quantity),
              error_message = ?,
              completed_at = COALESCE(?, completed_at),
@@ -46,6 +54,10 @@ export async function PATCH(
         [
           validatedData.status,
           validatedData.provider ?? null,
+          validatedData.provider_order_id ?? null,
+          validatedData.start_count ?? null,
+          validatedData.remains ?? null,
+          validatedData.provider_status ?? null,
           validatedData.delivered_quantity ?? (validatedData.status === 'COMPLETED' ? currentTask.requested_quantity : null),
           validatedData.error_message ?? null,
           completedAt,
@@ -65,12 +77,12 @@ export async function PATCH(
            VALUES (?, ?, 'COMPLETED', 'Layanan followers selesai diproses 100% (Fulfillment Selesai)', ?)`,
           [crypto.randomUUID(), currentTask.order_id, now]
         );
-      } else if (validatedData.status === 'IN_PROGRESS') {
+      } else if (validatedData.status === 'PROCESSING') {
         await connection.execute(
           `UPDATE orders SET service_status = 'PROCESSING', updated_at = ? WHERE id = ?`,
           [now, currentTask.order_id]
         );
-      } else if (validatedData.status === 'FAILED' || validatedData.status === 'CANCELLED') {
+      } else if (validatedData.status === 'FAILED') {
         await connection.execute(
           `UPDATE orders SET service_status = 'FAILED', updated_at = ? WHERE id = ?`,
           [now, currentTask.order_id]

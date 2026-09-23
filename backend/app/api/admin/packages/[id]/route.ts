@@ -43,15 +43,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         : existing.estimated_processing_minutes;
     const estimatedTime = data.estimatedTime !== undefined ? data.estimatedTime : existing.estimated_time;
     const badge = data.badge !== undefined ? data.badge : existing.badge;
+    const providerServiceId = data.providerServiceId !== undefined ? data.providerServiceId : existing.provider_service_id;
     const isActive = data.isActive !== undefined ? (data.isActive ? 1 : 0) : existing.is_active;
 
     await execute(
       `UPDATE packages 
        SET name = ?, category = ?, followers = ?, price = ?, description = ?,
            estimated_processing_minutes = ?, estimated_time = ?, badge = ?,
-           is_active = ?, updated_at = NOW()
+           provider_service_id = ?, is_active = ?, updated_at = NOW()
        WHERE id = ?`,
-      [name, category, followers, price, description, estimatedProcessingMinutes, estimatedTime, badge, isActive, id]
+      [name, category, followers, price, description, estimatedProcessingMinutes, estimatedTime, badge, providerServiceId, isActive, id]
     );
 
     const updatedPackage = await queryOne<any>('SELECT * FROM packages WHERE id = ?', [id]);

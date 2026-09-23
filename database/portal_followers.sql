@@ -61,6 +61,7 @@ CREATE TABLE `packages` (
     `estimated_processing_minutes` INT NOT NULL DEFAULT 5,
     `estimated_time` VARCHAR(100) NOT NULL DEFAULT '1–5 Menit',
     `badge` VARCHAR(100) NULL,
+    `provider_service_id` VARCHAR(50) NULL,
     `is_active` TINYINT(1) NOT NULL DEFAULT 1,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -132,9 +133,13 @@ CREATE TABLE `fulfillment_tasks` (
     `id` VARCHAR(36) NOT NULL,
     `order_id` VARCHAR(36) NOT NULL,
     `provider` VARCHAR(100) NOT NULL DEFAULT 'INTERNAL',
+    `provider_order_id` VARCHAR(100) NULL,
     `service_type` VARCHAR(100) NOT NULL DEFAULT 'INSTAGRAM_FOLLOWERS',
     `requested_quantity` INT NOT NULL,
     `delivered_quantity` INT NOT NULL DEFAULT 0,
+    `start_count` INT NOT NULL DEFAULT 0,
+    `remains` INT NOT NULL DEFAULT 0,
+    `provider_status` VARCHAR(50) NULL,
     `status` ENUM('WAITING_FOR_FULFILLMENT', 'PROCESSING', 'PARTIALLY_COMPLETED', 'COMPLETED', 'FAILED') NOT NULL DEFAULT 'WAITING_FOR_FULFILLMENT',
     `started_at` DATETIME NULL,
     `completed_at` DATETIME NULL,
@@ -144,6 +149,7 @@ CREATE TABLE `fulfillment_tasks` (
     PRIMARY KEY (`id`),
     INDEX `idx_fulfillment_order_id` (`order_id`),
     INDEX `idx_fulfillment_status` (`status`),
+    INDEX `idx_fulfillment_provider_order_id` (`provider_order_id`),
     CONSTRAINT `fk_fulfillment_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

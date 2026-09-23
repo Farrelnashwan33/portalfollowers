@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
       estimatedProcessingMinutes,
       estimatedTime,
       badge,
+      providerServiceId,
       isActive,
     } = validationResult.data;
 
@@ -62,9 +63,9 @@ export async function POST(req: NextRequest) {
     await execute(
       `INSERT INTO packages (
         id, name, category, followers, price, description,
-        estimated_processing_minutes, estimated_time, badge, is_active,
+        estimated_processing_minutes, estimated_time, badge, provider_service_id, is_active,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newId,
         name,
@@ -75,6 +76,7 @@ export async function POST(req: NextRequest) {
         estimatedProcessingMinutes || 5,
         estimatedTime || '1–5 Menit',
         badge || null,
+        providerServiceId || null,
         isActive !== undefined ? (isActive ? 1 : 0) : 1,
         now,
         now,
